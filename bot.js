@@ -36,7 +36,7 @@ client.on('message', msg => {
                 hungermap.set(msg.author.id, 1);
                 msg.reply("hunger set to 1");
             }
-            else if (hunger === 5)
+            else if (hunger >= 5)
                 msg.reply("oh no! your hunger is already 5");
             else {
                 hungerinc += hunger;
@@ -51,9 +51,46 @@ client.on('message', msg => {
             if (hunger > 5)
                 msg.reply("too thorsty, try again");
             else {
+                hungermap.delete(msg.author.id);
                 hungermap.set(msg.author.id, hunger);
                 msg.reply("hunger set to " + hunger);
             }
+        }
+        //rouse check to possibly increment hunger if query is "rouse"
+        else if (message === 'rouse') {
+            //get hunger, if undefined set to 1 and flag
+            let hunger = hungermap.get(msg.author.id);
+            let hungerUndef = false;
+            if (hunger === undefined) {
+                hungerUndef = true;
+                hunger = 1;
+            }
+
+            //generate check result
+            let res = (Math.floor(Math.random() * 10) + 1);
+
+            //default assume success
+            let returnMessage = "success! no beast for you, your hunger remains at " + hunger + " \n";
+            let emoji = "<:redsuccess:" + process.env.IMG_REDSUCCESS + ">";
+
+            //if already at hunger 5, must immediately test for frenzy regardless of any result and cannot increment
+            if (hunger >= 5) {
+                returnMessage = "oh no! your hunger is already 5! better test for frenzy (difficulty 4)";
+                emoji = "";
+            }
+            //if failure, handle and increment
+            else if (res < 6) {
+                hunger++;
+                hungermap.delete(msg.author.id);
+                hungermap.set(msg.author.id, hunger);
+                emoji = "<:redfail:" + process.env.IMG_REDFAIL + ">";
+                returnMessage = "failure. your hunger increases by 1 to " + hunger + "\n";
+            }
+
+            //structure and send reply
+            if (hungerUndef)
+                returnMessage = "you don't have a hunger value so we assumed a hunger of 1\n" + returnMessage;
+            msg.reply(returnMessage + emoji);
         }
         //roll dice if query is "r" followed by a number
         else if (exp.test(message)) {
