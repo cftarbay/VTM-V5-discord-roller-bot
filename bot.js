@@ -4,10 +4,10 @@ require('dotenv').config();
 const Discord = require('discord.js');
 const client = new Discord.Client();
 
-//regex to match "r" <number of dice in pool> "d" <number of hunger dice> "h"- hunger dice are optional
-const exp = /r\d+d(\d*h){0,1}/;
+//regex to match "r" followed by any or no whitespace, and then the number of dice in the pool
+const exp = /r\s*\d+/;
 
-//unused hunger map, will be used in next version.
+//map of hunger based on userid as keys
 const hungermap = new Map();
 
 client.on('ready', () => {
@@ -17,15 +17,18 @@ client.on('ready', () => {
 client.login(process.env.DISCORD_TOKEN);
 
 client.on('message', msg => {
+
+    //message must start with ! to trigger bot
     if (msg.content.substring(0, 1) === "!") {
 
+        //remove ! for further processing
         let message = msg.content.substring(1);
 
-        //retrieve hunger value stored for user
+        //retrieve hunger value stored for user if query is "hunger"
         if (message === "hunger" && (hungermap.get(msg.author.id) !== undefined)) {
             msg.reply("your hunger is " + hungermap.get(msg.author.id));
         }
-        //increment hunger value(if less than 5, or if undefined set to 1)
+        //increment hunger value(if less than 5, or if undefined set to 1) if query is "increment"
         else if (message === "increment") {
             let hunger = hungermap.get(msg.author.id);
             let hungerinc = 1;
@@ -42,7 +45,7 @@ client.on('message', msg => {
                 msg.reply("hunger incremented to " + hungerinc);
             }
         }
-        //set hunger to a value between 0 and 5
+        //set hunger to a value between 0 and 5 if query is "set" followed by a number 0-5
         else if (/set\s*\d/.test(message)) {
             let hunger = parseInt(message.split(/\D/).filter(function (num) { return num.length > 0 }));
             if (hunger > 5)
@@ -52,109 +55,118 @@ client.on('message', msg => {
                 msg.reply("hunger set to " + hunger);
             }
         }
-        //roll dice
+        //roll dice if query is "r" followed by a number
         else if (exp.test(message)) {
-            //split on non-digit characters to get array of numbers
-            let nums = message.split(/\D/).filter(function (num) { return num.length > 0 });
+            //split on non-digit characters to get number of dice in pool
+            let totalDice = parseInt(message.split(/\D/).filter(function (num) { return num.length > 0 }));
 
-            console.log(msg.author)
-
-            //first arg is total number of dice
-            let totalDice = parseInt(nums[0]);
-            let hungerDice, normalDice = 0;
-
-            //second arg if it exists is number of hunger dice
-            if (nums.length > 1)
-                hungerDice = parseInt(nums[1]);
-            //cannot have hunger of more than 5
-            if (hungerDice > 5)
-                msg.reply("too thorsty, try again");
+            if (totalDice > 20) {
+                msg.reply("can only roll a pool of up to 20 dice, try again");
+            }
             else {
-                //if more hunger dice than pool, use all hunger dice
-                if (hungerDice >= totalDice)
-                    hungerDice = totalDice;
-                //if not, have a number of normal dice
-                else
-                    normalDice = totalDice - hungerDice;
+                let hungerDice, normalDice = 0;
 
-                //roll dice by collecting rng 1-10 results in arrays for each die type
-                let hungerResults = [];
-                let normalResults = [];
-                for (let i = 0; i < hungerDice; i++)
-                    hungerResults.push(rolldie());
-                for (let i = 0; i < normalDice; i++)
-                    normalResults.push(rolldie());
+                //lookup hunger, if no value flag and use 1
+                hungerDice = hungermap.get(msg.author.id);
 
-                function rolldie() {
-                    return (Math.floor(Math.random() * 10) + 1);
+                let hungerUndef = false;
+                if (hungerDice === undefined) {
+                    hungerUndef = true;
+                    hungerDice = 1;
                 }
 
-                //sort each resultset
-                hungerResults.sort(function (a, b) {
-                    return b - a;
-                });
-                normalResults.sort(function (a, b) {
-                    return b - a;
-                });
-
-                //construct string of emoji for each die
-                let emojistring = "";
-                for (let i = 0; i < hungerResults.length; i++) {
-                    let res = hungerResults[i];
-                    if (res === 1)
-                        emojistring += "<:bestialfail:" + process.env.IMG_BESTIALFAIL + ">";
-                    else if (res < 6)
-                        emojistring += "<:redfail:" + process.env.IMG_REDFAIL + ">";
-                    else if (res < 10)
-                        emojistring += "<:redsuccess:" + process.env.IMG_REDSUCCESS + ">";
+                //cannot have hunger of more than 5
+                if (hungerDice > 5)
+                    msg.reply("too thorsty, try again");
+                else {
+                    //if more hunger dice than pool, use all hunger dice
+                    if (hungerDice >= totalDice)
+                        hungerDice = totalDice;
+                    //if not, have a number of normal dice
                     else
-                        emojistring += "<:redcrit:" + process.env.IMG_REDCRIT + ">";
-                }
-                for (let i = 0; i < normalResults.length; i++) {
-                    let res = normalResults[i];
-                    if (res < 6)
-                        emojistring += "<:normalfail:" + process.env.IMG_NORMALFAIL + ">";
-                    else if (res < 10)
-                        emojistring += "<:normalsuccess:" + process.env.IMG_NORMALSUCCESS + ">";
-                    else
-                        emojistring += "<:normalcrit:" + process.env.IMG_NORMALCRIT + ">";
-                }
+                        normalDice = totalDice - hungerDice;
 
-                //full list of results not separated by die type
-                let totalResults = hungerResults.concat(normalResults);
+                    //roll dice by collecting rng 1-10 results in arrays for each die type
+                    let hungerResults = [];
+                    let normalResults = [];
+                    for (let i = 0; i < hungerDice; i++)
+                        hungerResults.push(rolldie());
+                    for (let i = 0; i < normalDice; i++)
+                        normalResults.push(rolldie());
 
-                //total successes, doubling for 2 crits
-                let successes = 0;
-                let critPair = false;
-                let critPairFound = false;
-                for (let i = 0; i < totalResults.length; i++) {
-                    let res = totalResults[i];
-                    if (res === 10 && critPair) {
-                        successes += 3;
-                        critPair = false;
-                        critPairFound = true;
+                    function rolldie() {
+                        return (Math.floor(Math.random() * 10) + 1);
                     }
-                    else if (res === 10 && !critPair) {
-                        successes += 1;
-                        critPair = true;
+
+                    //sort each resultset
+                    hungerResults.sort(function (a, b) {
+                        return b - a;
+                    });
+                    normalResults.sort(function (a, b) {
+                        return b - a;
+                    });
+
+                    //construct string of emoji for each die
+                    let emojistring = "";
+                    for (let i = 0; i < hungerResults.length; i++) {
+                        let res = hungerResults[i];
+                        if (res === 1)
+                            emojistring += "<:bestialfail:" + process.env.IMG_BESTIALFAIL + ">";
+                        else if (res < 6)
+                            emojistring += "<:redfail:" + process.env.IMG_REDFAIL + ">";
+                        else if (res < 10)
+                            emojistring += "<:redsuccess:" + process.env.IMG_REDSUCCESS + ">";
+                        else
+                            emojistring += "<:redcrit:" + process.env.IMG_REDCRIT + ">";
                     }
-                    else if (res > 5)
-                        successes += 1;
+                    for (let i = 0; i < normalResults.length; i++) {
+                        let res = normalResults[i];
+                        if (res < 6)
+                            emojistring += "<:normalfail:" + process.env.IMG_NORMALFAIL + ">";
+                        else if (res < 10)
+                            emojistring += "<:normalsuccess:" + process.env.IMG_NORMALSUCCESS + ">";
+                        else
+                            emojistring += "<:normalcrit:" + process.env.IMG_NORMALCRIT + ">";
+                    }
+
+                    //full list of results not separated by die type
+                    let totalResults = hungerResults.concat(normalResults);
+
+                    //count total successes, doubling for 2 crits
+                    let successes = 0;
+                    let critPair = false;
+                    let critPairFound = false;
+                    for (let i = 0; i < totalResults.length; i++) {
+                        let res = totalResults[i];
+                        if (res === 10 && critPair) {
+                            successes += 3;
+                            critPair = false;
+                            critPairFound = true;
+                        }
+                        else if (res === 10 && !critPair) {
+                            successes += 1;
+                            critPair = true;
+                        }
+                        else if (res > 5)
+                            successes += 1;
+                    }
+
+                    //create summary string with number of successes and noting possible messy crits/bestial failures
+                    let returnMessage = successes + " successes";
+                    if (successes === 0 && hungerResults.includes(1))
+                        returnMessage = "bestial failure";
+                    else if (hungerResults.includes(1))
+                        returnMessage += ", possible bestial failure";
+                    if (critPairFound && hungerResults.includes(10))
+                        returnMessage += ", possible messy crit";
+                    if (hungerUndef)
+                        returnMessage = "you don't have a hunger value so we assumed a hunger of 1\n" + returnMessage;
+
+                    //format message, add emojis, and send
+                    returnMessage += "\n";
+                    returnMessage += emojistring;
+                    msg.reply(returnMessage);
                 }
-
-                //create summary string with number of successes and noting possible messy crits/bestial failures
-                let returnMessage = successes + " successes";
-                if (successes === 0 && hungerResults.includes(1))
-                    returnMessage = "bestial failure";
-                else if (hungerResults.includes(1))
-                    returnMessage += ", possible bestial failure";
-                if (critPairFound && hungerResults.includes(10))
-                    returnMessage += ", possible messy crit";
-
-                //format message, add emojis, and send
-                returnMessage += "\n";
-                returnMessage += emojistring
-                msg.reply(returnMessage);
             }
         }
     }
