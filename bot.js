@@ -16,8 +16,36 @@ client.on('ready', () => {
 
 client.login(process.env.DISCORD_TOKEN);
 
-client.on('message', msg => {
 
+//replies with the hunger value of the user who queried
+function getHunger(msg) {
+    msg.reply("your hunger is " + hungermap.get(msg.author.id));
+}
+
+//sets hunger value for the user who queried
+function setHunger(msg, value) {
+    hungermap.delete(msg.author.id);
+    hungermap.set(msg.author.id, value);
+}
+
+//sets hunger value for user who queried, replies with it
+function setHungerMsg(msg, value) {
+    setHunger(msg, value);
+    msg.reply("hunger set to " + value);
+}
+
+//increments hunger for user who queried, replies with it
+function incrementHunger(msg, value) {
+    value++;
+    setHunger(msg, value);
+    msg.reply("hunger incremented to " + value);
+}
+
+function rolldie() {
+    return (Math.floor(Math.random() * 10) + 1);
+}
+
+client.on('message', msg => {
     //message must start with ! to trigger bot
     if (msg.content.substring(0, 1) === "!") {
 
@@ -25,36 +53,25 @@ client.on('message', msg => {
         let message = msg.content.substring(1);
 
         //retrieve hunger value stored for user if query is "hunger"
-        if (message === "hunger" && (hungermap.get(msg.author.id) !== undefined)) {
-            msg.reply("your hunger is " + hungermap.get(msg.author.id));
-        }
+        if (message === "hunger" && (hungermap.get(msg.author.id) !== undefined))
+            getHunger(msg)
         //increment hunger value(if less than 5, or if undefined set to 1) if query is "increment"
         else if (message === "increment") {
             let hunger = hungermap.get(msg.author.id);
-            let hungerinc = 1;
-            if (hunger === undefined) {
-                hungermap.set(msg.author.id, 1);
-                msg.reply("hunger set to 1");
-            }
+            if (hunger === undefined)
+                setHungerMsg(msg, 1);
             else if (hunger >= 5)
                 msg.reply("oh no! your hunger is already 5");
-            else {
-                hungerinc += hunger;
-                hungermap.delete(msg.author.id);
-                hungermap.set(msg.author.id, hungerinc);
-                msg.reply("hunger incremented to " + hungerinc);
-            }
+            else
+                incrementHunger(msg, hunger);
         }
         //set hunger to a value between 0 and 5 if query is "set" followed by a number 0-5
         else if (/set\s*\d/.test(message)) {
             let hunger = parseInt(message.split(/\D/).filter(function (num) { return num.length > 0 }));
             if (hunger > 5)
-                msg.reply("too thorsty, try again");
-            else {
-                hungermap.delete(msg.author.id);
-                hungermap.set(msg.author.id, hunger);
-                msg.reply("hunger set to " + hunger);
-            }
+                msg.reply("invalid hunger (max is 5), try again");
+            else
+                setHungerMsg(msg, hunger)
         }
         //rouse check to possibly increment hunger if query is "rouse"
         else if (message === 'rouse') {
@@ -67,7 +84,7 @@ client.on('message', msg => {
             }
 
             //generate check result
-            let res = (Math.floor(Math.random() * 10) + 1);
+            let res = rolldie();
 
             //default assume success
             let returnMessage = "success! no beast for you, your hunger remains at " + hunger + " \n";
@@ -81,8 +98,7 @@ client.on('message', msg => {
             //if failure, handle and increment
             else if (res < 6) {
                 hunger++;
-                hungermap.delete(msg.author.id);
-                hungermap.set(msg.author.id, hunger);
+                setHunger(msg, hunger);
                 emoji = "<:redfail:" + process.env.IMG_REDFAIL + ">";
                 returnMessage = "failure. your hunger increases by 1 to " + hunger + "\n";
             }
@@ -130,10 +146,6 @@ client.on('message', msg => {
                         hungerResults.push(rolldie());
                     for (let i = 0; i < normalDice; i++)
                         normalResults.push(rolldie());
-
-                    function rolldie() {
-                        return (Math.floor(Math.random() * 10) + 1);
-                    }
 
                     //sort each resultset
                     hungerResults.sort(function (a, b) {
