@@ -4,18 +4,20 @@ require('dotenv').config();
 const Discord = require('discord.js');
 const client = new Discord.Client();
 
-//regex to match "r" followed by any or no whitespace, and then the number of dice in the pool
-const exp = /r\s*\d+/;
-
 //map of hunger based on userid as keys
 const hungermap = new Map();
 
+//unused map of of recent rolls to be used for reroll based on userid as keys
+const rerollmap = new Map();
+
+const DEBUG = true;
+
 client.on('ready', () => {
-    console.log(`Logged in as ${client.user.tag}!`);
+    if (DEBUG)
+        console.log(`Logged in as ${client.user.tag}!`);
 });
 
 client.login(process.env.DISCORD_TOKEN);
-
 
 //replies with the hunger value of the user who queried
 function getHunger(msg) {
@@ -41,8 +43,20 @@ function incrementHunger(msg, value) {
     msg.reply("hunger incremented to " + value);
 }
 
+//rolls a d10
 function rolldie() {
     return (Math.floor(Math.random() * 10) + 1);
+}
+
+//returns a sorted array with length equal to the parameter of rngs 1-10 
+function rolldice(num) {
+    let res = [];
+    for (let i = 0; i < num; i++)
+        res.push(rolldie());
+    res.sort(function (a, b) {
+        return b - a;
+    });
+    return res;
 }
 
 client.on('message', msg => {
@@ -55,16 +69,18 @@ client.on('message', msg => {
         //retrieve hunger value stored for user if query is "hunger"
         if (message === "hunger" && (hungermap.get(msg.author.id) !== undefined))
             getHunger(msg)
-        //increment hunger value(if less than 5, or if undefined set to 1) if query is "increment"
+
+        //increment hunger value (if less than 5, or if undefined set to 1) if query is "increment"
         else if (message === "increment") {
             let hunger = hungermap.get(msg.author.id);
             if (hunger === undefined)
                 setHungerMsg(msg, 1);
             else if (hunger >= 5)
-                msg.reply("oh no! your hunger is already 5");
+                msg.reply("oh no! your hunger is already 5. it may be time for a frenzy check (difficulty 4) or you could fall into torpor");
             else
                 incrementHunger(msg, hunger);
         }
+
         //set hunger to a value between 0 and 5 if query is "set" followed by a number 0-5
         else if (/set\s*\d/.test(message)) {
             let hunger = parseInt(message.split(/\D/).filter(function (num) { return num.length > 0 }));
@@ -73,34 +89,41 @@ client.on('message', msg => {
             else
                 setHungerMsg(msg, hunger)
         }
+
         //rouse check to possibly increment hunger if query is "rouse"
         else if (message === 'rouse') {
+
             //get hunger, if undefined set to 1 and flag
             let hunger = hungermap.get(msg.author.id);
             let hungerUndef = false;
             if (hunger === undefined) {
                 hungerUndef = true;
                 hunger = 1;
+                setHunger(msg, 1);
             }
 
             //generate check result
             let res = rolldie();
 
             //default assume success
-            let returnMessage = "success! no beast for you, your hunger remains at " + hunger + " \n";
-            let emoji = "<:redsuccess:" + process.env.IMG_REDSUCCESS + ">";
+            let returnMessage = "success! no beast for you, your hunger remains at " + hunger;
+            let emoji = "\n<:redsuccess:" + process.env.IMG_REDSUCCESS + ">";
 
-            //if already at hunger 5, must immediately test for frenzy regardless of any result and cannot increment
+            //if already at hunger 5, must immediately test for frenzy or enter torpor and cannot increment
             if (hunger >= 5) {
-                returnMessage = "oh no! your hunger is already 5! better test for frenzy (difficulty 4)";
-                emoji = "";
+                returnMessage = "oh no! your hunger is already 5. it may be time for a frenzy check (difficulty 4)";
+                if (res < 6) {
+                    returnMessage += " or you could fall into torpor";
+                    emoji = "\n<:redfail:" + process.env.IMG_REDFAIL + ">";
+                }
             }
+
             //if failure, handle and increment
             else if (res < 6) {
                 hunger++;
                 setHunger(msg, hunger);
-                emoji = "<:redfail:" + process.env.IMG_REDFAIL + ">";
-                returnMessage = "failure. your hunger increases by 1 to " + hunger + "\n";
+                emoji = "\n<:redfail:" + process.env.IMG_REDFAIL + ">";
+                returnMessage = "failure. your hunger increases by 1 to " + hunger;
             }
 
             //structure and send reply
@@ -108,29 +131,30 @@ client.on('message', msg => {
                 returnMessage = "you don't have a hunger value so we assumed a hunger of 1\n" + returnMessage;
             msg.reply(returnMessage + emoji);
         }
-        //roll dice if query is "r" followed by a number
-        else if (exp.test(message)) {
+
+        //roll dice if query is "roll" followed by any or no whitespace, and the number of dice in the pool
+        else if (/roll\s*\d+/.test(message)) {
             //split on non-digit characters to get number of dice in pool
             let totalDice = parseInt(message.split(/\D/).filter(function (num) { return num.length > 0 }));
 
-            if (totalDice > 20) {
+            if (totalDice > 20)
                 msg.reply("can only roll a pool of up to 20 dice, try again");
-            }
+
             else {
                 let hungerDice, normalDice = 0;
 
                 //lookup hunger, if no value flag and use 1
                 hungerDice = hungermap.get(msg.author.id);
-
                 let hungerUndef = false;
                 if (hungerDice === undefined) {
                     hungerUndef = true;
                     hungerDice = 1;
+                    setHunger(msg, 1);
                 }
 
                 //cannot have hunger of more than 5
                 if (hungerDice > 5)
-                    msg.reply("too thorsty, try again");
+                    msg.reply("your hunger value is too high (max 5). !set your hunger to a valid value and try again");
                 else {
                     //if more hunger dice than pool, use all hunger dice
                     if (hungerDice >= totalDice)
@@ -140,23 +164,11 @@ client.on('message', msg => {
                         normalDice = totalDice - hungerDice;
 
                     //roll dice by collecting rng 1-10 results in arrays for each die type
-                    let hungerResults = [];
-                    let normalResults = [];
-                    for (let i = 0; i < hungerDice; i++)
-                        hungerResults.push(rolldie());
-                    for (let i = 0; i < normalDice; i++)
-                        normalResults.push(rolldie());
-
-                    //sort each resultset
-                    hungerResults.sort(function (a, b) {
-                        return b - a;
-                    });
-                    normalResults.sort(function (a, b) {
-                        return b - a;
-                    });
+                    let hungerResults = rolldice(hungerDice);
+                    let normalResults = rolldie(normalDice);
 
                     //construct string of emoji for each die
-                    let emojistring = "";
+                    let emojistring = "\n";
                     for (let i = 0; i < hungerResults.length; i++) {
                         let res = hungerResults[i];
                         if (res === 1)
@@ -181,7 +193,7 @@ client.on('message', msg => {
                     //full list of results not separated by die type
                     let totalResults = hungerResults.concat(normalResults);
 
-                    //count total successes, doubling for 2 crits
+                    //count total successes, counting 4 for 2 crits
                     let successes = 0;
                     let critPair = false;
                     let critPairFound = false;
@@ -193,11 +205,11 @@ client.on('message', msg => {
                             critPairFound = true;
                         }
                         else if (res === 10 && !critPair) {
-                            successes += 1;
+                            successes++;
                             critPair = true;
                         }
                         else if (res > 5)
-                            successes += 1;
+                            successes++;
                     }
 
                     //create summary string with number of successes and noting possible messy crits/bestial failures
@@ -211,12 +223,18 @@ client.on('message', msg => {
                     if (hungerUndef)
                         returnMessage = "you don't have a hunger value so we assumed a hunger of 1\n" + returnMessage;
 
-                    //format message, add emojis, and send
-                    returnMessage += "\n";
+                    //add emojis and send
                     returnMessage += emojistring;
                     msg.reply(returnMessage);
                 }
             }
         }
+        //todo reroll using indices function
+        /*else if () {
+
+        }*/
+        //todo timer for auto incrementing hunger
+
+        //todo keyword incrementer
     }
 });
