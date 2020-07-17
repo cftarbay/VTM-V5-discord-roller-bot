@@ -59,6 +59,62 @@ function rolldice(num) {
     return res;
 }
 
+//gets the hunger die emoji corresponding to the parameter value
+function getHungerEmoji(num) {
+    if (num === 1)
+        return "<:bestialfail:" + process.env.IMG_BESTIALFAIL + ">";
+    else if (num < 6)
+        return "<:redfail:" + process.env.IMG_REDFAIL + ">";
+    else if (num < 10)
+        return "<:redsuccess:" + process.env.IMG_REDSUCCESS + ">";
+    else
+        return "<:redcrit:" + process.env.IMG_REDCRIT + ">";
+}
+
+//gets the normal die emoji corresponding to the parameter value
+function getNormalEmoji(num) {
+    if (num < 6)
+        return "<:normalfail:" + process.env.IMG_NORMALFAIL + ">";
+    else if (num < 10)
+        return "<:normalsuccess:" + process.env.IMG_NORMALSUCCESS + ">";
+    else
+        return "<:normalcrit:" + process.env.IMG_NORMALCRIT + ">";
+}
+
+//counts successes and whether a crit was found in the array and returns those values
+function countSuccesses(arr) {
+    let successes = 0;
+    let critPair = false;
+    let critPairFound = false;
+    for (let i = 0; i < arr.length; i++) {
+        let res = arr[i];
+        if (res === 10 && critPair) {
+            successes += 3;
+            critPair = false;
+            critPairFound = true;
+        }
+        else if (res === 10 && !critPair) {
+            successes++;
+            critPair = true;
+        }
+        else if (res > 5)
+            successes++;
+    }
+    return { successes: successes, critPairFound: critPairFound };
+}
+
+//create result string based on successes and whether crit pair includes hunger crit
+function resultString(res, hungerResults) {
+    let returnMessage = res.successes + " successes";
+    if (res.successes === 0 && hungerResults.includes(1))
+        returnMessage = "bestial failure";
+    else if (hungerResults.includes(1))
+        returnMessage += ", possible bestial failure";
+    if (res.critPairFound && hungerResults.includes(10))
+        returnMessage += ", possible messy crit";
+    return returnMessage;
+}
+
 client.on('message', msg => {
     //message must start with ! to trigger bot
     if (msg.content.substring(0, 1) === "!") {
@@ -132,6 +188,71 @@ client.on('message', msg => {
             msg.reply(returnMessage + emoji);
         }
 
+        //todo willpower reroll using indices
+        else if (/reroll(\s+\d{1,2}){1,3}/.test(message)) {
+
+            //if no previous roll, cannot reroll
+            let prevRoll = rerollmap.get(msg.author.id);
+            if (prevRoll === undefined) {
+                msg.reply("cannot reroll- no recent roll found");
+                return;
+            }
+            //if no normal dice, cannot reroll
+            if (prevRoll.normalDice.length === 0) {
+                msg.reply("no normal dice to reroll");
+                return;
+            }
+
+            //if no indices or >3 indices, cannot reroll
+            let split = message.split(" ");
+            let indices = [];
+            for (let i = 0; i < split.length; i++)
+                if (/\d+/.test(split[i]))
+                    indices.push(parseInt(split[i]));
+            if (indices.length === 0 || indices.length > 3) {
+                msg.reply("invalid entry, try again in the format !reroll ind1 ind2 ind3");
+                return;
+            }
+
+            //if indices out of bounds, cannot reroll
+            let invalidIndex = false;
+            for (let i = 0; i < indices.length; i++)
+                if (indices[i] < 1 || indices[i] > prevRoll.hungerDice.length + prevRoll.normalDice.length)
+                    invalidIndex = true;
+            if (invalidIndex) {
+                msg.reply("one of the indices you entered was invalid. valid indices are between " + (prevRoll.hungerDice.length + 1) + " and " + (prevRoll.hungerDice.length + prevRoll.normalDice.length));
+                return;
+            }
+
+            //if any indices repeated, cannot reroll
+            let repeatedIndex = false;
+            for (let i = 0; i < indices.length; i++)
+                for (let j = i + 1; j < indices.length; j++)
+                    if (indices[i] === indices[j])
+                        repeatedIndex = true;
+            if (repeatedIndex) {
+                msg.reply("one of the indices you entered was repeated. try again");
+                return;
+            }
+
+            //reroll
+            for (let i = 0; i < indices.length; i++)
+                prevRoll.normalDice[indices[i] - 1 - prevRoll.hungerDice.length] = rolldie();
+
+            //build result set and reply
+            let emojiString = '\n';
+            for (let i = 0; i < prevRoll.hungerDice.length; i++)
+                emojiString += getHungerEmoji(prevRoll.hungerDice[i]);
+            for (let i = 0; i < prevRoll.normalDice.length; i++)
+                emojiString += getNormalEmoji(prevRoll.normalDice[i]);
+            let res = countSuccesses(prevRoll.hungerDice.concat(prevRoll.normalDice));
+            let str = resultString(res, prevRoll.hungerDice);
+            msg.reply(str + emojiString);
+
+            //remove roll from ability to be rerolled
+            rerollmap.delete(msg.author.id);
+        }
+
         //roll dice if query is "roll" followed by any or no whitespace, and the number of dice in the pool
         else if (/roll\s*\d+/.test(message)) {
             //split on non-digit characters to get number of dice in pool
@@ -165,61 +286,23 @@ client.on('message', msg => {
 
                     //roll dice by collecting rng 1-10 results in arrays for each die type
                     let hungerResults = rolldice(hungerDice);
-                    let normalResults = rolldie(normalDice);
+                    let normalResults = rolldice(normalDice);
 
                     //construct string of emoji for each die
                     let emojistring = "\n";
-                    for (let i = 0; i < hungerResults.length; i++) {
-                        let res = hungerResults[i];
-                        if (res === 1)
-                            emojistring += "<:bestialfail:" + process.env.IMG_BESTIALFAIL + ">";
-                        else if (res < 6)
-                            emojistring += "<:redfail:" + process.env.IMG_REDFAIL + ">";
-                        else if (res < 10)
-                            emojistring += "<:redsuccess:" + process.env.IMG_REDSUCCESS + ">";
-                        else
-                            emojistring += "<:redcrit:" + process.env.IMG_REDCRIT + ">";
-                    }
-                    for (let i = 0; i < normalResults.length; i++) {
-                        let res = normalResults[i];
-                        if (res < 6)
-                            emojistring += "<:normalfail:" + process.env.IMG_NORMALFAIL + ">";
-                        else if (res < 10)
-                            emojistring += "<:normalsuccess:" + process.env.IMG_NORMALSUCCESS + ">";
-                        else
-                            emojistring += "<:normalcrit:" + process.env.IMG_NORMALCRIT + ">";
-                    }
-
-                    //full list of results not separated by die type
-                    let totalResults = hungerResults.concat(normalResults);
+                    for (let i = 0; i < hungerResults.length; i++)
+                        emojistring += getHungerEmoji(hungerResults[i]);
+                    for (let i = 0; i < normalResults.length; i++)
+                        emojistring += getNormalEmoji(normalResults[i])
 
                     //count total successes, counting 4 for 2 crits
-                    let successes = 0;
-                    let critPair = false;
-                    let critPairFound = false;
-                    for (let i = 0; i < totalResults.length; i++) {
-                        let res = totalResults[i];
-                        if (res === 10 && critPair) {
-                            successes += 3;
-                            critPair = false;
-                            critPairFound = true;
-                        }
-                        else if (res === 10 && !critPair) {
-                            successes++;
-                            critPair = true;
-                        }
-                        else if (res > 5)
-                            successes++;
-                    }
+                    let res = countSuccesses(hungerResults.concat(normalResults));
+
+                    rerollmap.delete(msg.author.id);
+                    rerollmap.set(msg.author.id, { normalDice: normalResults, hungerDice: hungerResults });
 
                     //create summary string with number of successes and noting possible messy crits/bestial failures
-                    let returnMessage = successes + " successes";
-                    if (successes === 0 && hungerResults.includes(1))
-                        returnMessage = "bestial failure";
-                    else if (hungerResults.includes(1))
-                        returnMessage += ", possible bestial failure";
-                    if (critPairFound && hungerResults.includes(10))
-                        returnMessage += ", possible messy crit";
+                    let returnMessage = resultString(res, hungerResults);
                     if (hungerUndef)
                         returnMessage = "you don't have a hunger value so we assumed a hunger of 1\n" + returnMessage;
 
@@ -229,12 +312,19 @@ client.on('message', msg => {
                 }
             }
         }
-        //todo reroll using indices function
-        /*else if () {
 
-        }*/
         //todo timer for auto incrementing hunger
+        else if(/timer\s*start\s*\d{1,3}/.test(message)){
+
+        }
+        
+        else if(message === 'timer stop'){
+            
+        }
 
         //todo keyword incrementer
+        else if(/tick\s*word ([a-z]|[A-Z])+/.test(message)){
+
+        }
     }
 });
